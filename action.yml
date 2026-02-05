@@ -1,0 +1,59 @@
+name: "nixomatic-action"
+description: "Automatic reproducible environments. As easy as it gets."
+branding:
+  icon: "package"
+  color: "blue"
+
+inputs:
+  packages:
+    description: |
+      Packages to install (space or comma-separated string).
+      Supported formats:
+        - package         (latest from nixos-unstable)
+        - package@version (resolved via nxv API)
+        - package:rev     (exact nixpkgs revision)
+      Example: "python3@3.13.11 nodejs@24.13.0 jq" or "python3@3.13.11, nodejs@24.13.0, jq"
+    required: true
+  install-nix:
+    description: "Whether to install Nix. Set to false if Nix is already available."
+    required: false
+    default: true
+  run:
+    description: |
+      Script to run inside the Nix environment.
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Nix
+      if: inputs.install-nix
+      uses: cachix/install-nix-action@v31
+
+    - name: Activate environment
+      shell: bash
+      env:
+        INPUT_PACKAGES: ${{ inputs.packages }}
+        INPUT_RUN: ${{ inputs.run }}
+      run: |
+        # Split packages by comma, space, or newline and build URL
+        # with packages split by commas.
+        # Remove carriage returns, replace commas and newlines with spaces, normalize whitespace
+        PACKAGES=$(echo "$INPUT_PACKAGES" | tr -d '\r' | tr ',\n' ' ' | xargs)
+
+        # Build comma-separated package list for URL
+        ENCODED_PACKAGES=""
+        for pkg in $PACKAGES; do
+          # Skip empty entries
+          [ -z "$pkg" ] && continue
+          ENCODED_PKG=$(printf '%s' "$pkg" | jq -sRr @uri)
+          if [ -n "$ENCODED_PACKAGES" ]; then
+            ENCODED_PACKAGES="${ENCODED_PACKAGES},${ENCODED_PKG}"
+          else
+            ENCODED_PACKAGES="${ENCODED_PKG}"
+          fi
+        done
+        URL="https://nixomatic.com/?p=${ENCODED_PACKAGES}"
+
+        # Run the provided script inside nix develop
+        nix develop "$URL" --extra-experimental-features 'nix-command flakes' --command bash -c "$INPUT_RUN"
